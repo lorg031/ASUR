@@ -11,9 +11,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.w3c.dom.Element;
 
-
 import javax.xml.XMLConstants;
-import javax.xml.bind.*;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.transform.OutputKeys;
@@ -26,6 +24,8 @@ import javax.xml.validation.SchemaFactory;
 import java.io.*;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/xml")
@@ -49,10 +49,6 @@ public class XmlController {
             boolean isValid = xmlValidator.validateXml(xml, tempFile.getAbsolutePath());
             System.out.println("XML validation result: " + isValid);
 
-//            if (!isValid) {
-//                return ResponseEntity.badRequest().body("Generated XML is not valid against XSD.");
-//            }
-
             return ResponseEntity.ok(xml);  // Возвращаем сгенерированный XML
         } catch (Exception e) {
             System.err.println("Error during XML generation: " + e.getMessage());
@@ -60,9 +56,6 @@ public class XmlController {
             return ResponseEntity.status(500).body("Error: " + e.getMessage());
         }
     }
-
-
-
 
     private String generateXmlFromXsd(File xsdFile) throws Exception {
         // Чтение XSD для получения структуры
@@ -93,7 +86,6 @@ public class XmlController {
     Set<String> processedElements = new HashSet<>();
 
     private void addChildElementsFromXsd(Document document, Element parent, File xsdFile) throws Exception {
-        // Чтение XSD как DOM
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
         DocumentBuilder builder = factory.newDocumentBuilder();
@@ -116,17 +108,41 @@ public class XmlController {
                         Element childXsdElement = (Element) childElements.item(j);
                         String childName = childXsdElement.getAttribute("name");
                         String childType = childXsdElement.getAttribute("type");
-                        String minOccurs = childXsdElement.getAttribute("minOccurs");
 
-                        // Создаем элемент с дефолтным значением
+                        // Пытаемся найти паттерн в restriction
+                        String childPattern = getPatternFromXsd(childXsdElement);
+                        System.out.println("Element: " + childName + ", Pattern: " + childPattern);  // Логирование паттерна
+
+                        // Создаем элемент с дефолтным значением или значением по паттерну
                         Element childXmlElement = document.createElement(childName);
-                        childXmlElement.setTextContent(getExampleDataForType(childType));
+                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern));
                         parent.appendChild(childXmlElement);
 
-                        // Обрабатываем тип Void отдельно
-                        if ("Void".equals(childType)) {
-                            childXmlElement.setTextContent(""); // Пустое содержимое для Void
+                        // Рекурсивно обрабатываем вложенные элементы
+                        if (hasComplexType(childType, xsdDocument)) {
+                            addChildElementsFromXsd(document, childXmlElement, xsdFile);
                         }
+                    }
+                }
+
+                // Обрабатываем xs:sequence, если существует
+                NodeList sequences = xsdElement.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "sequence");
+                if (sequences.getLength() > 0) {
+                    Element sequenceGroup = (Element) sequences.item(0);
+                    NodeList childElements = sequenceGroup.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "element");
+                    for (int j = 0; j < childElements.getLength(); j++) {
+                        Element childXsdElement = (Element) childElements.item(j);
+                        String childName = childXsdElement.getAttribute("name");
+                        String childType = childXsdElement.getAttribute("type");
+
+                        // Пытаемся найти паттерн в restriction
+                        String childPattern = getPatternFromXsd(childXsdElement);
+                        System.out.println("Element: " + childName + ", Pattern: " + childPattern);  // Логирование паттерна
+
+                        // Создаем элемент с дефолтным значением или значением по паттерну
+                        Element childXmlElement = document.createElement(childName);
+                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern));
+                        parent.appendChild(childXmlElement);
 
                         // Рекурсивно обрабатываем вложенные элементы
                         if (hasComplexType(childType, xsdDocument)) {
@@ -138,9 +154,44 @@ public class XmlController {
         }
     }
 
+    private String getPatternFromXsd(Element element) {
+        // Добавление отладочного сообщения для отслеживания
+        System.out.println("Processing element: " + element.getAttribute("name"));
+
+        // Найдем все простые типы (simpleType) внутри элемента
+        NodeList simpleTypes = element.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "simpleType");
+
+        for (int i = 0; i < simpleTypes.getLength(); i++) {
+            Element simpleType = (Element) simpleTypes.item(i);
+
+            // Найдем все элементы xs:restriction внутри xs:simpleType
+            NodeList restrictions = simpleType.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "restriction");
+
+            for (int j = 0; j < restrictions.getLength(); j++) {
+                Element restriction = (Element) restrictions.item(j);
+
+                // Найдем элементы xs:pattern в xs:restriction
+                NodeList patternNodes = restriction.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "pattern");
+
+                if (patternNodes.getLength() > 0) {
+                    // Получаем паттерн
+                    String pattern = patternNodes.item(0).getTextContent();
+                    if (pattern != null && !pattern.isEmpty()) {
+                        System.out.println("Pattern found for element " + element.getAttribute("name") + ": " + pattern);
+                        return pattern;
+                    }
+                }
+            }
+        }
+
+        // Если паттерн не найден, возвращаем null
+        System.out.println("No pattern found for element " + element.getAttribute("name"));
+        return null;
+    }
 
 
-    // Проверка, является ли тип сложным
+
+
     private boolean hasComplexType(String typeName, Document xsdDocument) {
         NodeList complexTypes = xsdDocument.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "complexType");
         for (int i = 0; i < complexTypes.getLength(); i++) {
@@ -152,9 +203,11 @@ public class XmlController {
         return false;
     }
 
+    private String getExampleDataForType(String type, String pattern) {
+        if (pattern != null && !pattern.isEmpty()) {
+            return generateDataFromPattern(pattern); // Генерация данных по паттерну
+        }
 
-
-    private String getExampleDataForType(String type) {
         switch (type) {
             case "xs:string":
                 return "Example String";
@@ -167,57 +220,27 @@ public class XmlController {
             case "xs:boolean":
                 return "true";
             case "xs:date":
-                return "2024-12-06";
+                return "2024-12-06"; // пример даты
             case "xs:dateTime":
-                return "2024-12-06T12:00:00";
+                return "2024-12-06T12:00:00"; // пример даты и времени
             default:
-                return "Default Value"; // Для пользовательских типов
-        }
-    }
-
-    private String getExampleDataForElementWithRestrictions(Element xsdElement) {
-        NodeList restrictions = xsdElement.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "restriction");
-        if (restrictions.getLength() > 0) {
-            Element restriction = (Element) restrictions.item(0);
-            NodeList patterns = restriction.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "pattern");
-            if (patterns.getLength() > 0) {
-                String pattern = ((Element) patterns.item(0)).getAttribute("value");
-                // Генерация значения на основе паттерна (можно использовать библиотеку)
-                return "PatternMatch";
-            }
-
-            NodeList maxLengths = restriction.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "maxLength");
-            if (maxLengths.getLength() > 0) {
-                int maxLength = Integer.parseInt(((Element) maxLengths.item(0)).getAttribute("value"));
-                return "x".repeat(Math.min(5, maxLength)); // Пример значения
-            }
-        }
-        return "Default Value";
-    }
-
-    private void addAttributes(Element xmlElement, Element xsdElement) {
-        NodeList attributes = xsdElement.getElementsByTagNameNS(XMLConstants.W3C_XML_SCHEMA_NS_URI, "attribute");
-        for (int i = 0; i < attributes.getLength(); i++) {
-            Element attribute = (Element) attributes.item(i);
-            String name = attribute.getAttribute("name");
-            String type = attribute.getAttribute("type");
-            xmlElement.setAttribute(name, getExampleDataForType(type)); // Примерное значение
+                return "Default Value"; // Для неизвестных или нестандартных типов
         }
     }
 
 
-    // Метод для проверки, имеет ли элемент вложенные элементы
-    private boolean hasChildElements(Element element) {
-        NodeList childNodes = element.getChildNodes();
-        for (int i = 0; i < childNodes.getLength(); i++) {
-            if (childNodes.item(i).getNodeType() == Node.ELEMENT_NODE) {
-                return true;
-            }
+    private String generateDataFromPattern(String pattern) {
+        // Пример генератора данных для паттерна СНИЛС
+        // Используем регулярные выражения для создания данных
+        Pattern regex = Pattern.compile(pattern);
+        Matcher matcher = regex.matcher("123-456-789 01"); // Примерная строка для СНИЛС
+
+        if (matcher.matches()) {
+            return matcher.group();
+        } else {
+            return "Generated Data doesn't match pattern";
         }
-        return false;
     }
-
-
 
     private String getRootElementNameFromXsd(File xsdFile) throws Exception {
         // Чтение XSD как DOM
@@ -236,7 +259,4 @@ public class XmlController {
         }
         throw new Exception("Root element not found in XSD");
     }
-
-
 }
-
