@@ -1,6 +1,7 @@
 package com.asur.autoTest.controllers;
 
 import com.asur.autoTest.validators.XmlValidator;
+import com.mifmif.common.regex.Generex;
 import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlRootElement;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,7 @@ import javax.xml.validation.Schema;
 import javax.xml.validation.SchemaFactory;
 import java.io.*;
 import java.util.HashSet;
+import java.util.Random;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -111,11 +113,12 @@ public class XmlController {
 
                         // Пытаемся найти паттерн в restriction
                         String childPattern = getPatternFromXsd(childXsdElement);
+                        String base = getBaseFromXsd(childXsdElement);
                         System.out.println("Element: " + childName + ", Pattern: " + childPattern);  // Логирование паттерна
 
                         // Создаем элемент с дефолтным значением или значением по паттерну
                         Element childXmlElement = document.createElement(childName);
-                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern));
+                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern, base));
                         parent.appendChild(childXmlElement);
 
                         // Рекурсивно обрабатываем вложенные элементы
@@ -137,11 +140,12 @@ public class XmlController {
 
                         // Пытаемся найти паттерн в restriction
                         String childPattern = getPatternFromXsd(childXsdElement);
+                        String base = getBaseFromXsd(childXsdElement);
                         System.out.println("Element: " + childName + ", Pattern: " + childPattern);  // Логирование паттерна
 
                         // Создаем элемент с дефолтным значением или значением по паттерну
                         Element childXmlElement = document.createElement(childName);
-                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern));
+                        childXmlElement.setTextContent(getExampleDataForType(childType, childPattern, base));
                         parent.appendChild(childXmlElement);
 
                         // Рекурсивно обрабатываем вложенные элементы
@@ -154,38 +158,100 @@ public class XmlController {
         }
     }
 
-    private String getPatternFromXsd(Element element) {
-        // Добавление отладочного сообщения для отслеживания
-        System.out.println("Processing element: " + element.getAttribute("name"));
+//    private String getPatternFromXsd(Element element) {
+//        // Добавление отладочного сообщения для отслеживания
+//        System.out.println("Processing element: " + element.getAttribute("name") + element.getAttribute("minOccurs"));
+//
+//
+//        // Найдем все простые типы (simpleType) внутри элемента
+//        NodeList simpleTypes = element.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "simpleType");
+//
+//        for (int i = 0; i < simpleTypes.getLength(); i++) {
+//            Element simpleType = (Element) simpleTypes.item(i);
+//
+//            // Найдем все элементы xs:restriction внутри xs:simpleType
+//            NodeList restrictions = simpleType.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "restriction");
+//
+//            for (int j = 0; j < restrictions.getLength(); j++) {
+//                Element restriction = (Element) restrictions.item(j);
+//
+//                // Найдем элементы xs:pattern в xs:restriction
+//                NodeList patternNodes = restriction.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "pattern");
+//
+//                if (patternNodes.getLength() > 0) {
+//                    // Получаем паттерн
+//                    String pattern = patternNodes.item(0).getTextContent();
+//                    if (pattern != null && !pattern.isEmpty()) {
+//                        System.out.println("Pattern found for element " + element.getAttribute("name") + ": " + pattern);
+//                        return pattern;
+//                    }
+//                }
+//            }
+//        }
+//
+//        // Если паттерн не найден, возвращаем null
+//        System.out.println("No pattern found for element " + element.getAttribute("name"));
+//        return null;
+//    }
 
-        // Найдем все простые типы (simpleType) внутри элемента
+    private Element findRestriction(Element simpleType) {
+        NodeList restrictions = simpleType.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "restriction");
+        return restrictions.getLength() > 0 ? (Element) restrictions.item(0) : null;
+    }
+
+    private Element findSimpleType(Element element) {
         NodeList simpleTypes = element.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "simpleType");
+        return simpleTypes.getLength() > 0 ? (Element) simpleTypes.item(0) : null;
+    }
 
-        for (int i = 0; i < simpleTypes.getLength(); i++) {
-            Element simpleType = (Element) simpleTypes.item(i);
 
-            // Найдем все элементы xs:restriction внутри xs:simpleType
-            NodeList restrictions = simpleType.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "restriction");
+    private String getPatternFromXsd(Element element) {
 
-            for (int j = 0; j < restrictions.getLength(); j++) {
-                Element restriction = (Element) restrictions.item(j);
+        Element simpleType = findSimpleType(element); // Найдем simpleType
 
-                // Найдем элементы xs:pattern в xs:restriction
-                NodeList patternNodes = restriction.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "pattern");
+        if (simpleType != null) {
+            Element restriction = findRestriction(simpleType); // Найдем restriction
 
-                if (patternNodes.getLength() > 0) {
-                    // Получаем паттерн
-                    String pattern = patternNodes.item(0).getTextContent();
-                    if (pattern != null && !pattern.isEmpty()) {
-                        System.out.println("Pattern found for element " + element.getAttribute("name") + ": " + pattern);
-                        return pattern;
-                    }
+            if (restriction != null) {
+                String pattern = findPattern(restriction); // Найдем pattern
+
+                if (pattern != null) {
+                    System.out.println("Pattern found for element " + element.getAttribute("name") + ": " + pattern);
+                    return pattern;
                 }
             }
         }
 
-        // Если паттерн не найден, возвращаем null
-        System.out.println("No pattern found for element " + element.getAttribute("name"));
+        System.out.println("No pattern found for element " + (element != null ? element.getAttribute("name") : "null"));
+        return null;
+    }
+
+    private String getBaseFromXsd(Element element) {
+
+        Element simpleType = findSimpleType(element); // Найдем simpleType
+
+        if (simpleType != null) {
+            Element restriction = findRestriction(simpleType); // Найдем restriction
+
+            if (restriction != null) {
+                return restriction.getAttribute("base");
+
+
+            }
+        }
+
+        System.out.println("No pattern found for element " + (element != null ? element.getAttribute("name") : "null"));
+        return null;
+    }
+
+
+
+    private String findPattern(Element restriction) {
+        NodeList patternNodes = restriction.getElementsByTagNameNS("http://www.w3.org/2001/XMLSchema", "pattern");
+        if (patternNodes.getLength() > 0) {
+            Element pattern = (Element) patternNodes.item(0);
+            return pattern.getAttribute("value"); // Используем getAttribute
+        }
         return null;
     }
 
@@ -203,9 +269,11 @@ public class XmlController {
         return false;
     }
 
-    private String getExampleDataForType(String type, String pattern) {
+    private String getExampleDataForType(String type, String pattern, String base) {
         if (pattern != null && !pattern.isEmpty()) {
-            return generateDataFromPattern(pattern); // Генерация данных по паттерну
+            System.out.println("PATTERN:    " + generateTestValue(pattern, base));
+            return generateTestValue(pattern, base); // Генерация данных по паттерну
+
         }
 
         switch (type) {
@@ -229,18 +297,83 @@ public class XmlController {
     }
 
 
-    private String generateDataFromPattern(String pattern) {
-        // Пример генератора данных для паттерна СНИЛС
-        // Используем регулярные выражения для создания данных
-        Pattern regex = Pattern.compile(pattern);
-        Matcher matcher = regex.matcher("123-456-789 01"); // Примерная строка для СНИЛС
-
-        if (matcher.matches()) {
-            return matcher.group();
-        } else {
-            return "Generated Data doesn't match pattern";
+    public String generateTestValue(String pattern, String base) {
+        if (pattern == null || pattern.isEmpty()) {
+            return null; // Handle empty or null pattern
         }
+
+        Pattern compiledPattern = Pattern.compile(pattern);
+
+//        if(base.equals("date")){
+//            for (int i = 0; i < 100; i++) { // Maximum attempts to generate a value
+//                String generatedValue = generateRandomString(pattern, base);
+//                Matcher matcher = compiledPattern.matcher(generatedValue);
+//                if (matcher.matches()) {
+//                    return generatedValue;
+//                }
+//            }
+//            System.err.println("Unable to generate a value matching pattern: " + pattern + " After many attempts");
+//            return null;
+//        }
+
+        // Crucial: Avoid infinite loops with non-matching patterns
+        for (int i = 0; i < 100; i++) { // Maximum attempts to generate a value
+            String generatedValue = generateRandomString(pattern, base);
+            Matcher matcher = compiledPattern.matcher(generatedValue);
+            if (matcher.matches()) {
+                return generatedValue;
+            }
+        }
+        System.err.println("Unable to generate a value matching pattern: " + pattern + " After many attempts");
+        return null; // Return null if no matching value is found after multiple attempts
     }
+
+
+    private String generateRandomString(String pattern, String base) {
+        Generex generex = new Generex(pattern);
+        if (base.equals("date")){
+            Random random = new Random();
+            int day = random.nextInt(28) + 1; // Avoid invalid dates
+            int month = random.nextInt(12) + 1;
+            int year = random.nextInt(100) + 2000; // Generate years from 2000
+            return String.format("%02d.%02d.%04d", day, month, year);
+        }
+        return generex.random();
+    }
+    // Helper function to generate a random string based on the pattern
+//    private String generateRandomString(String pattern) {
+//        // Improve random value generation
+//        StringBuilder sb = new StringBuilder();
+//
+//        Pattern p = Pattern.compile("\\{[^}]*\\}");
+//        Matcher m = p.matcher(pattern);
+//        StringBuffer result = new StringBuffer();
+//
+//        while (m.find()) {
+//            String match = m.group();
+//            int num = Integer.parseInt(match.replaceAll("[{}]", "").trim());
+//
+//            String digits = "0123456789";
+//            Random r = new Random();
+//            for(int i = 0; i < num; i++){
+//                int randomIndex = r.nextInt(digits.length());
+//                sb.append(digits.charAt(randomIndex));
+//            }
+//            m.appendReplacement(result, sb.toString());
+//            sb.delete(0,sb.length()); //Clear the StringBuilder for the next repetition
+//
+//        }
+//        m.appendTail(result);
+//
+//
+//        return result.toString();
+//    }
+
+    private String generatePatternTest(){
+        Generex generex = new Generex("[0-9]{2}[.][0-9]{2}[.][0-9]{4}");
+        return (generex.random());
+    }
+
 
     private String getRootElementNameFromXsd(File xsdFile) throws Exception {
         // Чтение XSD как DOM
